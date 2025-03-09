@@ -9,10 +9,10 @@ app.use((req, res, next) => {
 
 app.get('/greeting', (req, res) => {
     const greetings = [
-        'Hello from Greeting Service!',
+        'Bem vindo ao Service Greeting!',
         'Welcome to our demo!',
         'Greetings, user!',
-        'Hi there!'
+        'VocÊ por aqui!!'
     ];
     const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
     res.send(randomGreeting);
