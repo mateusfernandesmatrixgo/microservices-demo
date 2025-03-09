@@ -32,7 +32,7 @@ app.get('/', (req, res) => {
             </head>
             <body>
                 <div class="container">
-                    <h1>Welcome to Microservices Demo</h1>
+                    <h1>Bem vindo ao Micro Servico Demo</h1>
                     <div id="greeting">Loading greeting...</div>
                     <div id="time">Loading time...</div>
                 </div>
