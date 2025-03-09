@@ -1,0 +1,43 @@
+name: Microservices CI
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+      
+      - id: set-matrix
+        run: |
+          CHANGED_SERVICES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep "service-" | cut -d/ -f1 | sort -u | jq -R -s -c 'split("\n")[:-1]')
+          echo "matrix={\"service\":$CHANGED_SERVICES}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.matrix != '{"service":[]}' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Build and Push
+        run: |
+          SERVICE="${{ matrix.service }}"
+          IMAGE_TAG="${{ github.sha }}"
+          
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/$SERVICE:$IMAGE_TAG ./$SERVICE
+          docker push ${{ secrets.DOCKER_USERNAME }}/$SERVICE:$IMAGE_TAG
