@@ -1,0 +1,119 @@
+# .github/workflows/ci-cd.yml
+name: Microservices CI/CD - Exemplo
+
+# Trigger da pipeline - só executa em push na main
+on:
+  push:
+    branches: [ main1 ]
+
+jobs:
+  # Job para detectar quais serviços foram alterados
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      # Saída deste job que será usada no próximo
+      #Utiliza o recurso "Matrix", para armanezar os nomes
+      #dos arquivos alterados na saida Step com ID Set-Matrix
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Necessário para comparar mudanças
+      
+      - name: Detectar serviços alterados
+        id: set-matrix
+        run: |
+          # Pega lista de diretórios que começam com 'service-' e foram alterados
+          CHANGED_SERVICES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep "service-" | cut -d/ -f1 | sort -u | jq -R -s -c 'split("\n")[:-1]')
+          echo "matrix={\"service\":$CHANGED_SERVICES}" >> $GITHUB_OUTPUT
+
+  # Job principal de build e deploy
+  build-and-deploy:
+    needs: detect-changes
+    # Só executa se algum serviço foi alterado
+    if: ${{ needs.detect-changes.outputs.matrix != '{"service":[]}' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    
+    steps:
+      # Step 1: Checkout do código fonte
+      - name: Checkout código fonte
+        uses: actions/checkout@v3
+
+      # Step 2: Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.service }}/package-lock.json
+
+      # Step 3: Instalar dependências
+      - name: Install dependencies
+        run: |
+          cd ${{ matrix.service }}
+          npm ci  # Instalação limpa das dependências
+
+      # Step 4: Executar testes
+      - name: Run tests
+        run: |
+          cd ${{ matrix.service }}
+          npm test  # Assumindo que você tem scripts de teste configurados
+
+      # Step 5: Login no Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Step 6: Build e Push da imagem Docker
+      - name: Build and Push
+        run: |
+          SERVICE="${{ matrix.service }}"
+          IMAGE_TAG="${{ github.sha }}"
+          
+          # Build da imagem
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/$SERVICE:$IMAGE_TAG ./$SERVICE
+          
+          # Push para o Docker Hub
+          docker push ${{ secrets.DOCKER_USERNAME }}/$SERVICE:$IMAGE_TAG
+
+      # Step 7: Checkout do repositório de infraestrutura
+      - name: Checkout infra repository
+        uses: actions/checkout@v3
+        with:
+          repository: ${{ secrets.INFRA_REPO }}  # seu-usuario/infra-repo
+          token: ${{ secrets.GIT_PAT }}
+          path: infra-repo
+
+      # Step 8: Atualizar manifestos Kubernetes
+      - name: Update Kubernetes manifests
+        run: |
+          cd infra-repo
+          SERVICE="${{ matrix.service }}"
+          IMAGE_TAG="${{ github.sha }}"
+          
+          # Loop através dos diretórios de clientes
+          for client_dir in clients/*/; do
+            echo "Atualizando manifestos para: $(basename "$client_dir")"
+            
+            # Procura e atualiza os manifestos que usam este serviço
+            find "$client_dir" -type f -name "*.yaml" | while read manifest; do
+              if grep -q "image: ${{ secrets.DOCKER_USERNAME }}/$SERVICE:" "$manifest"; then
+                echo "Atualizando manifesto: $manifest"
+                sed -i "s|image: ${{ secrets.DOCKER_USERNAME }}/$SERVICE:.*|image: ${{ secrets.DOCKER_USERNAME }}/$SERVICE:$IMAGE_TAG|" "$manifest"
+              fi
+            done
+          done
+          
+          # Commit e push das alterações se houver mudanças
+          if [[ -n $(git status -s) ]]; then
+            git config --global user.email "ci@github.com"
+            git config --global user.name "CI Bot"
+            git add .
+            git commit -m "Update $SERVICE image to $IMAGE_TAG"
+            git push
+          fi

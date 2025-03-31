@@ -1,7 +1,7 @@
 name: Microservices CI
 on:
   push:
-    branches: [ master ]
+    branches: [ master1 ]
 
 jobs:
   detect-changes:

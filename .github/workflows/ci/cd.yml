@@ -1,0 +1,61 @@
+name: Deploy Projetos APIs
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  set-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      should_skip: ${{ steps.set-matrix.outputs.should_skip }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - id: set-matrix
+        run: |
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+
+          CHANGED_PROJECTS=$(echo "$CHANGED_FILES" \
+            | grep '^packages/apis/[^/]\+/.\+' \
+            | cut -d/ -f3 \
+            | sort -u \
+            | jq -R -s -c 'split("\n")[:-1]')
+
+          echo "Projetos modificados detectados: $CHANGED_PROJECTS"
+
+          if [ "$CHANGED_PROJECTS" == "[]" ]; then
+            echo "Nenhum projeto modificado encontrado. Ignorando pipeline!"
+            echo "should_skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"project\":$CHANGED_PROJECTS}" >> $GITHUB_OUTPUT
+          fi
+
+  deploy:
+    needs: set-matrix
+    if: needs.set-matrix.outputs.should_skip == 'false'
+    strategy:
+      matrix: ${{ fromJson(needs.set-matrix.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    name: Build & Deploy ${{ matrix.project }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build projeto ${{ matrix.project }}
+        run: |
+          cd packages/apis/${{ matrix.project }}
+          npm ci
+          npm run build
+
+      - name: Build imagem Docker
+        run: |
+          cd packages/apis/${{ matrix.project }}
+          docker build -t myregistry.com/${{ matrix.project }}:${{ github.sha }} .
+
+      - name: Fazer push da imagem Docker
+        run: |
+          docker push myregistry.com/${{ matrix.project }}:${{ github.sha }}
