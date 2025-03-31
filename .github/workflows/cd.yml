@@ -13,6 +13,8 @@ jobs:
       should_skip: ${{ steps.set-matrix.outputs.should_skip }}
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - id: set-matrix
         run: |
